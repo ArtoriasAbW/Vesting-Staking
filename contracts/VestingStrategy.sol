@@ -17,7 +17,7 @@ contract VestingStrategy {
             if (block.timestamp > startTime_ + cliffDuration + vestingDuration) {
                 return stakeBalance_;
             }
-            return (block.timestamp - cliffDuration) * stakeBalance_ / vestingDuration;
+            return (block.timestamp - cliffDuration - startTime_) * stakeBalance_ / (vestingDuration);
         }
         return 0;
     }
