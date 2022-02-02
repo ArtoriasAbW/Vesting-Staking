@@ -9,6 +9,7 @@ async function addTime(additionalTime) {
 
 describe("Vesting Strategy test", function () {
   let account, VestingStrategy, firstVestingStrategy, secondVestingStrategy, beginTimestamp = Math.floor(Date.now() / 1000);
+  const oneDay = 86400;
   beforeEach(async () => {
     [account] = await ethers.getSigners();
     VestingStrategy = await ethers.getContractFactory("VestingStrategy");
@@ -17,9 +18,9 @@ describe("Vesting Strategy test", function () {
   });
   it("calculate test", async function () {
     expect(await firstVestingStrategy.calculate(beginTimestamp, 10)).to.equal(0);
-    await addTime(20 * 86400);
+    await addTime(20 * oneDay);
     expect(await firstVestingStrategy.calculate(beginTimestamp, 10)).to.equal(3);
-    await addTime(10 * 86400);
+    await addTime(11 * oneDay);
     expect(await firstVestingStrategy.calculate(beginTimestamp, 10)).to.equal(10);
   });
 });

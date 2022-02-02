@@ -4,7 +4,6 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/AccessControl.sol";
 
 import "./Token.sol";
-import "./IVestingStrategy.sol";
 import "./VestingStrategy.sol";
 
 contract VestingStaking is AccessControl {
@@ -13,92 +12,176 @@ contract VestingStaking is AccessControl {
 
     State public state;
 
-    uint256 public rewardPool;
-    uint256 public totalValueLocked;
-    
-
-    struct stakingInfo {
-        uint256 stakedBalance;
-        uint256 alredyWithdrawed;
-        address vestingContract;
-        uint256 startTime;
-    }
-
-    mapping (address => stakingInfo) accountStaking;
-
     enum State {
         Created,
         Started
     }
 
-    address public rewardTokenAddress;
-    address public VestingStrategyAddress;
+    enum VestingType {
+        FIRST_TYPE_VESTING,
+        SECOND_TYPE_VESTING
+    }
+
+    mapping (VestingType => address) vestings;
+
+    uint256 public totalValueLocked;
+
+    uint256 public startTime;
 
 
-    uint256 private initialStakeSize;
+    struct UserInfo {
+        uint256 stakedBalance;
+        uint256 alredyWithdrawed;
+        VestingType vestingContract;
+        uint256 startTime;
+        uint256 reward;
+        uint256 lastRewardUpdateTime;
+    }
+
+    struct UserInitInfo {
+        address account;
+        uint256 staked;
+        VestingType vestingType;
+    }
+
+    struct StakeInfo {
+        address rewardTokenAddress;
+    }
+
+    StakeInfo public stakeInfo;
+
+    uint256 public rewardPerDay;
+
+    mapping (address => UserInfo) accountStaking;
     
     constructor(address tokenAddress_) {
         _setupRole(OWNER_ROLE, msg.sender);
         _setRoleAdmin(WHITELISTED_ROLE, OWNER_ROLE);
-        rewardTokenAddress = tokenAddress_;
+        stakeInfo.rewardTokenAddress = tokenAddress_;
         state = State.Created;
     }
     
     modifier onlyState(State state_) {
-        require(state == state_);
+        require(state == state_, "function cannot be called in this contract state");
         _;
     }
 
-    // можно создать отдельную функцию для добавления в whitelist, принимающую массив, но нужно как-то ограничить размер массиваx
-
-    function start() public onlyState(State.Created) onlyRole(OWNER_ROLE)  returns (bool, uint256) { // (started, last index of whitelist account)
-
+    modifier userStaking() {
+        require(accountStaking[msg.sender].alredyWithdrawed < accountStaking[msg.sender].stakedBalance, "user isn't staking");
+        _;
     }
 
-    // нужно конкретному пользователю
-    function setInitialAllocation(uint256 allocaltion_) public onlyState(State.Created) onlyRole(OWNER_ROLE)  {
-        initialStakeSize = allocaltion_;
+    modifier userNotStaking() {
+        require(accountStaking[msg.sender].alredyWithdrawed == accountStaking[msg.sender].stakedBalance, "user is staking");
+        _;
+    }
+    function start(uint256 rewardPerDay_) public onlyState(State.Created) onlyRole(OWNER_ROLE) {
+        rewardPerDay = rewardPerDay_;
+        startTime = block.timestamp;
+        state = State.Started;
     }
 
-    // нужно конкретному пользователю
-    function setInitialReward(uint256 initialReward_) public onlyState(State.Created) onlyRole(OWNER_ROLE) {
-        rewardPool = initialReward_;
+    function initUsers(UserInitInfo[] calldata users) public onlyState(State.Created) onlyRole(OWNER_ROLE) {
+        require(users.length <= 10, "length > 10");
+        for (uint256 i = 0; i < users.length; i++) {
+            addToWhitelist(users[i].account);
+            accountStaking[users[i].account].stakedBalance = users[i].staked;
+            accountStaking[users[i].account].vestingContract = users[i].vestingType;
+            accountStaking[users[i].account].alredyWithdrawed = 0;
+            Token(stakeInfo.rewardTokenAddress).transferFrom(users[i].account, address(this), users[i].staked);
+            totalValueLocked += users[i].staked;
+        }
     }
 
-    // ok
-    function addExtraReward(uint256 reward_) public onlyState(State.Started) onlyRole(OWNER_ROLE) {
-        rewardPool += reward_;
+    function increaseRewardPerDay(uint256 reward_) public onlyState(State.Started) onlyRole(OWNER_ROLE) {
+        rewardPerDay += reward_;
     }
 
+    function initVestingStrategies(address firstVestingStrategy, address secondVestingStrategy) public onlyState(State.Created) onlyRole(OWNER_ROLE) {
+        vestings[VestingType.FIRST_TYPE_VESTING] = firstVestingStrategy;
+        vestings[VestingType.SECOND_TYPE_VESTING] = secondVestingStrategy;
+    }
 
-    function stake(uint256 amount) public onlyState(State.Started) onlyRole(WHITELISTED_ROLE) {
-        require(Token(rewardTokenAddress).balanceOf(msg.sender) >= amount, "sender doesn't have that amount of tokens on balance");
-        require(Token(rewardTokenAddress).allowance(msg.sender, address(this)) >= amount, "contract can't spend that amount of tokens");
+    function stake(uint256 amount, VestingType vestingStrategy) public onlyState(State.Started) onlyRole(WHITELISTED_ROLE) userNotStaking {
+        require(amount > 0, "amount is 0");
+        require(Token(stakeInfo.rewardTokenAddress).balanceOf(msg.sender) >= amount, "sender doesn't have that amount of tokens on balance");
+        require(Token(stakeInfo.rewardTokenAddress).allowance(msg.sender, address(this)) >= amount, "contract can't spend that amount of tokens");
+        accountStaking[msg.sender].vestingContract = vestingStrategy;
+        accountStaking[msg.sender].stakedBalance = amount;
+        accountStaking[msg.sender].startTime = block.timestamp;
+        accountStaking[msg.sender].lastRewardUpdateTime = block.timestamp;
+        accountStaking[msg.sender].alredyWithdrawed = 0;
+        totalValueLocked += amount;
+        Token(stakeInfo.rewardTokenAddress).transferFrom(msg.sender, address(this), amount);
     } 
 
-    // хз
-    function getReward() public onlyState(State.Started) onlyRole(WHITELISTED_ROLE) {
-
-    }
-
-    // снятие стейка, получение наград
-    function withdraw(uint256 amount) public onlyState(State.Started) onlyRole(WHITELISTED_ROLE) {
-
+    function withdraw(uint256 amount) public onlyState(State.Started) onlyRole(WHITELISTED_ROLE) userStaking {
+        UserInfo storage info = accountStaking[msg.sender];
+        if (info.startTime == 0) {
+            info.startTime = startTime;
+        }
+        uint256 left = claimLeft();
+        require(amount <= left, "can't withdraw that amount of tokens");
+        _updateReward();
+        info.alredyWithdrawed += left;
+        totalValueLocked -= left;
+        Token(stakeInfo.rewardTokenAddress).transfer(msg.sender, amount);
     }
     
-    // ok
     function addToWhitelist(address account) public onlyRole(OWNER_ROLE) {
-        require(hasRole(WHITELISTED_ROLE, account) == false, "Account already whitelisted");
+        require(hasRole(WHITELISTED_ROLE, account) == false, "account already whitelisted");
         grantRole(WHITELISTED_ROLE, account);
     }
-    // ok
+
     function removeFromWhiteList(address account) public onlyRole(OWNER_ROLE) {
-        require(hasRole(WHITELISTED_ROLE, account) == true, "Account not whitelisted");
+        require(hasRole(WHITELISTED_ROLE, account) == true, "account not whitelisted");
         revokeRole(WHITELISTED_ROLE, account);
     }
 
-    // ok
-    function _setVestingStrategy(address account, address vestringStrategy) internal onlyRole(OWNER_ROLE) {
-        accountStaking[account].vestingContract = vestringStrategy;
+    function calculateAPYStaked() public view onlyState(State.Started) onlyRole(WHITELISTED_ROLE) userStaking returns (uint256) {
+        return rewardPerDay * 365 * 100 / (totalValueLocked);
+    }
+
+    function calculateAPYNotStaked(uint256 staked_) public view onlyState(State.Started) onlyRole(WHITELISTED_ROLE) userNotStaking returns (uint256) {
+        return rewardPerDay * 365 * 100 / (totalValueLocked + staked_);
+    }
+
+    function _calculateReward(uint256 staked_, uint256 rewardStakingInterval) internal view onlyState(State.Started) onlyRole(WHITELISTED_ROLE) returns (uint256) {
+        return rewardStakingInterval * rewardPerDay * staked_ / 1 days / totalValueLocked;
+    }
+
+    function _updateReward() internal onlyState(State.Started) onlyRole(WHITELISTED_ROLE) {
+        UserInfo storage staker = accountStaking[msg.sender];
+        if (staker.lastRewardUpdateTime == 0) {
+            staker.lastRewardUpdateTime = startTime;
+        }
+        uint256 reward = _calculateReward(staker.stakedBalance - staker.alredyWithdrawed, block.timestamp - staker.lastRewardUpdateTime);
+        if (reward > 0) {
+            staker.lastRewardUpdateTime = block.timestamp;
+            staker.reward += reward;
+        }
+    }
+
+    function claimLeft() public view onlyState(State.Started) onlyRole(WHITELISTED_ROLE) userStaking returns (uint256) {
+        UserInfo storage staker = accountStaking[msg.sender];
+        return VestingStrategy(vestings[staker.vestingContract]).calculate(staker.startTime, staker.stakedBalance) - staker.alredyWithdrawed;
+    }
+
+    function getReward() public onlyState(State.Started) onlyRole(WHITELISTED_ROLE) {
+        UserInfo storage staker = accountStaking[msg.sender];
+        _updateReward();
+        if (staker.reward > 0) {
+            uint256 debt = staker.reward;
+            staker.reward = 0;
+            Token(stakeInfo.rewardTokenAddress).mint(msg.sender, debt);
+        }
+    }
+
+    function getTVL() public view onlyState(State.Started) onlyRole(WHITELISTED_ROLE) returns (uint256) {
+        return totalValueLocked;
+    }
+
+    function getFullAmountOfTokens() public view onlyState(State.Started) onlyRole(WHITELISTED_ROLE) returns (uint256) {
+        return Token(stakeInfo.rewardTokenAddress).totalSupply();
     }
 }
