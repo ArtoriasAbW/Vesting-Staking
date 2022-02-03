@@ -1,4 +1,4 @@
-const { expect } = require("chai");
+const { expect, use } = require("chai");
 const { ethers } = require("hardhat");
 
 async function addTime(additionalTime) {
@@ -55,7 +55,7 @@ describe("Contract test", function () {
     await expect(vestingStaking.addToWhitelist(user1.address)).to.be.revertedWith("already whitelisted");
     await expect(vestingStaking.addToWhitelist(user2.address)).to.be.revertedWith("already whitelisted");
 
-    await vestingStaking.start(10);
+    await vestingStaking.start(10, 1000);
 
     await expect(vestingStaking.connect(user1).withdraw(1)).to.be.revertedWith("can't withdraw that amount of tokens");
     addTime(18 * oneDay);
@@ -86,7 +86,7 @@ describe("Contract test", function () {
     let rewardPerDay;
     beforeEach(async () => {
       rewardPerDay = 10;
-      vestingStaking.start(rewardPerDay);
+      vestingStaking.start(rewardPerDay, 1000);
       token.transfer(user1.address, 1100);
       token.transfer(user2.address, 2000);
       token.transfer(user3.address, 3000);
@@ -174,6 +174,14 @@ describe("Contract test", function () {
         await vestingStaking.connect(user2).getReward();
         expect(await token.balanceOf(user1.address)).to.equal(BigInt(oldUser1Balance) + BigInt(rewardPerDay) * BigInt(10) / BigInt(2));
         expect(await token.balanceOf(user2.address)).to.equal(BigInt(oldUser2Balance) + BigInt(rewardPerDay) * BigInt(10) / BigInt(2));
+        addTime(oneDay * 500);
+        await expect(vestingStaking.connect(user1).getReward()).to.be.revertedWith("reward pool less than reward");
+        vestingStaking.increaseRewardPool(5000);
+        token.transfer(vestingStaking.address, 5000);
+        oldUser1Balance = await token.balanceOf(user1.address);
+        await vestingStaking.connect(user1).getReward();
+        expect(await token.balanceOf(user1.address)).to.equal(BigInt(oldUser1Balance) + BigInt(2500));
+
       });
     });
     describe("APY test", function() {
