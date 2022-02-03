@@ -33,7 +33,7 @@ describe("Contract test", function () {
     await vestingStaking.initVestingStrategies(firstVestingStrategy.address, secondVestingStrategy.address);
   });
   it("call functions before start with revert", async function() {
-    await expect(vestingStaking.increaseRewardPerDay(300)).to.be.revertedWith("function cannot be called in this contract state");
+    await expect(vestingStaking.increaseRewardPool(300)).to.be.revertedWith("function cannot be called in this contract state");
   });
   it("double addToWhitelist", async function() {
     await vestingStaking.addToWhitelist(user1.address);
@@ -126,13 +126,13 @@ describe("Contract test", function () {
       });
       it("correct withdraw", async function () {
         let balanceBeforeWithdraw = await token.balanceOf(user1.address);
-        addTime(18 * oneDay); // 18 days
+        addTime(18 * oneDay); 
         expect(await vestingStaking.connect(user1).claimLeft()).to.equal(200);
         await vestingStaking.connect(user1).withdraw(200);
         expect(await token.balanceOf(user1.address)).to.equal(BigInt(balanceBeforeWithdraw) + BigInt(200));
       });
       it("withdraw more than user can at the moment", async function() {
-        addTime(18 * oneDay); // 18 days
+        addTime(18 * oneDay);
         await expect(vestingStaking.connect(user1).withdraw(201)).to.be.revertedWith("can't withdraw that amount of tokens");
       });
       it("withdraw when vesting ended", async function() {
@@ -199,10 +199,6 @@ describe("Contract test", function () {
 
         expect(firstUserAPY).to.equal(secondUserAPY).to.equal(thirdUserAPY);
         let oldFirstAPY = firstUserAPY;
-        await vestingStaking.increaseRewardPerDay(10);
-        firstUserAPY = await vestingStaking.connect(user1).calculateAPYStaked();
-
-        expect(firstUserAPY).to.equal(oldFirstAPY * 2);
       });
     });
   });
